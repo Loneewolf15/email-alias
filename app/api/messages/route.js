@@ -10,20 +10,15 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const aliasId = searchParams.get('aliasId');
     const messageId = searchParams.get('messageId');
+    const tokenParam = searchParams.get('token');
 
     const registry = loadRegistry();
     const aliasRecord = registry.find(a => String(a.id) === String(aliasId));
 
-    if (!aliasRecord) {
-      return NextResponse.json({
-        error: 'Alias not found in active registry',
-        aliasId
-      }, { status: 404 });
-    }
+    const sidToken = tokenParam || aliasRecord?.token || aliasRecord?.sid_token;
 
     // 1. In-App Direct Inbox with full body content
-    if (aliasRecord.provider === 'inbox') {
-      const sidToken = aliasRecord.token || aliasRecord.sid_token;
+    if (sidToken || aliasRecord?.provider === 'inbox') {
       if (!sidToken) {
         return NextResponse.json({ error: 'Missing session token for inbox alias' }, { status: 400 });
       }

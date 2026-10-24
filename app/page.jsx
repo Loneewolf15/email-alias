@@ -82,6 +82,24 @@ export default function Dashboard() {
     setTimeout(() => setCopiedEmail(null), 2500);
   };
 
+  // LocalStorage helpers for Vercel serverless durability
+  const getLocalInboxes = useCallback(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem('naija_inboxes');
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  }, []);
+
+  const saveLocalInboxes = useCallback((items) => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem('naija_inboxes', JSON.stringify(items || []));
+    } catch (e) {}
+  }, []);
+
   // Fetch status, aliases, and live forwarded activities
   const refreshData = useCallback(async () => {
     try {
@@ -98,7 +116,23 @@ export default function Dashboard() {
       }
       if (aliasesRes.ok) {
         const aData = await aliasesRes.json();
-        setAliases(aData.aliases || []);
+        const serverAliases = aData.aliases || [];
+        const clientInboxes = getLocalInboxes();
+
+        // Merge server aliases with client-stored inboxes so Vercel cold starts never lose inboxes
+        const combined = [...serverAliases];
+        for (const localItem of clientInboxes) {
+          if (!combined.some(c => c.id === localItem.id || c.alias.toLowerCase() === localItem.alias.toLowerCase())) {
+            combined.unshift(localItem);
+          }
+        }
+
+        // Apply provider filter if needed
+        const filtered = selectedProvider === 'all'
+          ? combined
+          : combined.filter(a => a.provider === selectedProvider);
+
+        setAliases(filtered);
       }
       if (activitiesRes.ok) {
         const actData = await activitiesRes.json();
@@ -110,7 +144,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [selectedProvider]);
+  }, [selectedProvider, getLocalInboxes]);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -148,7 +182,8 @@ export default function Dashboard() {
     setLoadingAliasMails(true);
 
     try {
-      const res = await fetch(`/api/messages?aliasId=${encodeURIComponent(aliasItem.id)}`);
+      const tokenParam = aliasItem.token || aliasItem.sid_token || '';
+      const res = await fetch(`/api/messages?aliasId=${encodeURIComponent(aliasItem.id)}&token=${encodeURIComponent(tokenParam)}`);
       if (res.ok) {
         const data = await res.json();
         if (data.provider === 'inbox') {
@@ -168,7 +203,8 @@ export default function Dashboard() {
   const handleOpenMessage = async (msg, aliasItem) => {
     if (aliasItem.provider === 'inbox') {
       try {
-        const res = await fetch(`/api/messages?aliasId=${encodeURIComponent(aliasItem.id)}&messageId=${encodeURIComponent(msg.id)}`);
+        const tokenParam = aliasItem.token || aliasItem.sid_token || '';
+        const res = await fetch(`/api/messages?aliasId=${encodeURIComponent(aliasItem.id)}&messageId=${encodeURIComponent(msg.id)}&token=${encodeURIComponent(tokenParam)}`);
         if (res.ok) {
           const data = await res.json();
           setSelectedEmail({
@@ -235,6 +271,12 @@ export default function Dashboard() {
 
       if (data.createdCount > 0) {
         showToast(`Created ${data.createdCount} new alias(es) on ${generatorProvider.toUpperCase()}!`);
+        // Save in-app inboxes directly to localStorage for Vercel serverless durability
+        const inboxesCreated = (data.created || []).filter(c => c.provider === 'inbox');
+        if (inboxesCreated.length > 0) {
+          const current = getLocalInboxes();
+          saveLocalInboxes([...inboxesCreated, ...current.filter(c => !inboxesCreated.some(n => n.id === c.id))]);
+        }
       } else {
         showToast(data.error || 'No aliases were created', 'error');
       }
@@ -264,6 +306,10 @@ export default function Dashboard() {
       const data = await res.json();
       if (res.ok) {
         showToast(`Deleted ${item.alias}`);
+        if (item.provider === 'inbox') {
+          const current = getLocalInboxes();
+          saveLocalInboxes(current.filter(c => c.id !== item.id));
+        }
         setAliases(prev => prev.filter(a => a.id !== item.id));
         if (selectedAliasForMails?.id === item.id) {
           setSelectedAliasForMails(null);
@@ -289,6 +335,9 @@ export default function Dashboard() {
       const data = await res.json();
       if (res.ok) {
         showToast(data.message || 'Aliases deleted successfully.');
+        if (selectedProvider === 'all' || selectedProvider === 'inbox') {
+          saveLocalInboxes([]);
+        }
         setAliases([]);
         setSelectedAliasForMails(null);
         setSelectedEmail(null);
