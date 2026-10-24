@@ -1,0 +1,10 @@
+# Sample names for testing import and shuffle mixing
+# You can supply "First Last" or just single names
+Chidi Okafor
+Fatima Aliyu
+Adewale Adebayo
+Zainab Haruna
+Emeka Eze
+Aisha Bello
+Kelechi Okonkwo
+Oluwafemi Martins

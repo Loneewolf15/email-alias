@@ -1,0 +1,20 @@
+{
+  "name": "email-aliases",
+  "version": "1.0.0",
+  "description": "A Python tool to batch-create real, deliverable email forwarding aliases via **SimpleLogin** or **AnonAddy (addy.io)**, paired with authentic Nigerian names or your own imported lists.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "lucide-react": "^1.61.0",
+    "next": "^14.2.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}
