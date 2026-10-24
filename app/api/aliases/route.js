@@ -238,6 +238,16 @@ export async function POST(req) {
       }
     }
 
+    if (createdItems.length === 0) {
+      return NextResponse.json({
+        success: false,
+        createdCount: 0,
+        requestedCount: requestedCount,
+        errors: errors,
+        error: errors[0]?.error || `Failed to create aliases on ${provider.toUpperCase()}`
+      }, { status: 400 });
+    }
+
     if (createdItems.length > 0) {
       const currentRegistry = loadRegistry();
       const updatedRegistry = [

@@ -235,6 +235,8 @@ export default function Dashboard() {
 
       if (data.createdCount > 0) {
         showToast(`Created ${data.createdCount} new alias(es) on ${generatorProvider.toUpperCase()}!`);
+      } else {
+        showToast(data.error || 'No aliases were created', 'error');
       }
 
       if (data.hitRateLimit) {
