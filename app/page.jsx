@@ -19,7 +19,12 @@ import {
   Inbox,
   ArrowUpRight,
   Shield,
-  Send
+  Send,
+  X,
+  ExternalLink,
+  ChevronRight,
+  User,
+  Filter
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -38,6 +43,11 @@ export default function Dashboard() {
   const [category, setCategory] = useState('all');
   const [label, setLabel] = useState('');
   const [activeTab, setActiveTab] = useState('active'); // 'active' | 'inbox' | 'preview' | 'history'
+
+  // Per-Alias Mailbox & Content Reader States
+  const [selectedAliasForMails, setSelectedAliasForMails] = useState(null);
+  const [selectedEmail, setSelectedEmail] = useState(null);
+  const [aliasFilterId, setAliasFilterId] = useState('all');
 
   // Previews
   const [previewList, setPreviewList] = useState([]);
@@ -192,6 +202,9 @@ export default function Dashboard() {
       if (res.ok) {
         showToast(`Deleted ${email}`);
         setAliases(prev => prev.filter(a => a.id !== id));
+        if (selectedAliasForMails?.id === id) {
+          setSelectedAliasForMails(null);
+        }
         refreshData();
       } else {
         showToast(data.error || 'Delete failed', 'error');
@@ -214,6 +227,8 @@ export default function Dashboard() {
       if (res.ok) {
         showToast(data.message || 'All aliases deleted! 10 spots freed up.');
         setAliases([]);
+        setSelectedAliasForMails(null);
+        setSelectedEmail(null);
         setShowDeleteAllModal(false);
         refreshData();
       } else {
@@ -231,6 +246,20 @@ export default function Dashboard() {
   const availableSlots = Math.max(0, quotaMax - activeCount);
   const quotaPercent = Math.min(100, Math.round((activeCount / quotaMax) * 100));
   const totalMailsForwarded = aliases.reduce((acc, a) => acc + (a.nb_forward || 0), 0);
+
+  // Filter activities for global tab
+  const filteredActivities = aliasFilterId === 'all'
+    ? activities
+    : activities.filter(a => a.aliasId === aliasFilterId || a.aliasEmail === aliasFilterId);
+
+  // Activities strictly for selectedAliasForMails modal
+  const aliasSpecificActivities = selectedAliasForMails
+    ? activities.filter(a => (
+        String(a.aliasId) === String(selectedAliasForMails.id) ||
+        (a.aliasEmail && a.aliasEmail.toLowerCase() === selectedAliasForMails.alias.toLowerCase()) ||
+        (a.to && a.to.toLowerCase() === selectedAliasForMails.alias.toLowerCase())
+      ))
+    : [];
 
   return (
     <>
@@ -599,23 +628,27 @@ export default function Dashboard() {
                         </div>
                       </div>
 
-                      {/* Card Footer: Highlight Mails Received (NO forward to loneewolf) */}
+                      {/* Card Footer: Per-Alias Mailbox Trigger */}
                       <div className="card-footer-clean">
-                        <span className={`received-count-badge ${forwards > 0 ? 'has-mails' : ''}`}>
+                        <button
+                          onClick={() => setSelectedAliasForMails(item)}
+                          className={`received-count-badge ${forwards > 0 ? 'has-mails' : ''}`}
+                          style={{ cursor: 'pointer', border: forwards > 0 ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid var(--border-subtle)' }}
+                          title={`Click to open isolated mailbox for ${item.full_name}`}
+                        >
                           <Inbox size={13} />
-                          {forwards === 1 ? '1 Mail Received' : `${forwards} Mails Received`}
-                        </span>
+                          <span>{forwards === 1 ? '1 Mail Received' : `${forwards} Mails Received`}</span>
+                          {forwards > 0 && <ChevronRight size={13} style={{ marginLeft: '2px', opacity: 0.8 }} />}
+                        </button>
 
-                        {forwards > 0 && (
-                          <button
-                            onClick={() => setActiveTab('inbox')}
-                            className="view-mails-btn"
-                            title="View forwarded emails"
-                          >
-                            <span>View Mails</span>
-                            <ArrowUpRight size={13} />
-                          </button>
-                        )}
+                        <button
+                          onClick={() => setSelectedAliasForMails(item)}
+                          className="view-mails-btn"
+                          title={`Preview mails for ${item.full_name}`}
+                        >
+                          <span>{forwards > 0 ? 'Open Mailbox' : 'Mailbox'}</span>
+                          <ArrowUpRight size={13} />
+                        </button>
                       </div>
                     </div>
                   );
@@ -625,7 +658,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* TAB 2: Forwarded Mail Feed / Live Inbox (Delivered to loneewolf15) */}
+        {/* TAB 2: Forwarded Mail Feed / Live Inbox (With Per-Alias Filter) */}
         {activeTab === 'inbox' && (
           <div className="glass-panel" style={{ padding: '24px' }}>
             <div className="feed-header-banner">
@@ -652,20 +685,56 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {activities.length === 0 ? (
+            {/* Per-Alias Filter Bar (Konsta UI Segmented Filter) */}
+            <div style={{ marginBottom: '18px' }}>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Filter size={12} /> Filter by Alias:
+              </div>
+              <div className="alias-filter-bar">
+                <button
+                  className={`alias-filter-pill ${aliasFilterId === 'all' ? 'active' : ''}`}
+                  onClick={() => setAliasFilterId('all')}
+                >
+                  All Aliases ({activities.length})
+                </button>
+                {aliases.map(a => {
+                  const countForAlias = activities.filter(act => String(act.aliasId) === String(a.id) || act.aliasEmail === a.alias).length;
+                  return (
+                    <button
+                      key={a.id}
+                      className={`alias-filter-pill ${aliasFilterId === a.id ? 'active' : ''}`}
+                      onClick={() => setAliasFilterId(a.id)}
+                    >
+                      <span>{a.full_name}</span>
+                      <span style={{ fontSize: '10px', opacity: 0.8 }}>({countForAlias})</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {filteredActivities.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '50px 20px', color: 'var(--text-dim)' }}>
                 <Inbox size={42} style={{ margin: '0 auto 12px auto', opacity: 0.4 }} />
                 <h4 style={{ fontSize: '16px', color: 'var(--text-main)', marginBottom: '6px' }}>
-                  No Forwarded Emails Yet
+                  No Mails Found for this Selection
                 </h4>
                 <p style={{ fontSize: '13px', maxWidth: '420px', margin: '0 auto' }}>
-                  When someone sends an email to any of your active Nigerian aliases, SimpleLogin forwards it to <strong>loneewolf15@protonmail.com</strong> and records the delivery details here!
+                  {aliasFilterId === 'all'
+                    ? 'When someone sends an email to any of your active Nigerian aliases, SimpleLogin forwards it to loneewolf15@protonmail.com and records the delivery details here!'
+                    : 'This specific alias has not received any forwarded messages yet.'}
                 </p>
               </div>
             ) : (
               <div className="activity-list">
-                {activities.map((act, idx) => (
-                  <div key={idx} className="activity-item">
+                {filteredActivities.map((act, idx) => (
+                  <div
+                    key={idx}
+                    className="activity-item"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setSelectedEmail(act)}
+                    title="Click to view full mail contents and reply"
+                  >
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
                         <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 600 }}>
@@ -683,14 +752,17 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-                      <span className="activity-delivery-tag">
-                        <Check size={12} />
-                        Delivered to loneewolf15@protonmail.com
-                      </span>
-                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                        {act.timestamp ? new Date(act.timestamp * 1000).toLocaleString() : 'Recent'}
-                      </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                        <span className="activity-delivery-tag">
+                          <Check size={12} />
+                          Delivered to loneewolf15
+                        </span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                          {act.timestamp ? new Date(act.timestamp * 1000).toLocaleString() : 'Recent'}
+                        </span>
+                      </div>
+                      <ChevronRight size={16} color="var(--text-dim)" />
                     </div>
                   </div>
                 ))}
@@ -827,15 +899,203 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Toast Feedback */}
-        {toast && (
-          <div className={`toast ${toast.type === 'error' ? 'error' : ''}`}>
-            {toast.type === 'error' ? (
-              <AlertCircle size={18} color="var(--rose)" />
-            ) : (
-              <CheckCircle2 size={18} color="var(--emerald)" />
-            )}
-            <span>{toast.message}</span>
+        {/* MODAL 1: Per-Alias Isolated Mailbox Drawer (Apple Design Sheet) */}
+        {selectedAliasForMails && (
+          <div className="modal-overlay" onClick={() => setSelectedAliasForMails(null)}>
+            <div className="mail-reader-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="mail-reader-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div className="avatar-circle">
+                    {selectedAliasForMails.full_name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-main)' }}>
+                      {selectedAliasForMails.full_name}
+                    </div>
+                    <div style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', color: '#a7f3d0' }}>
+                      {selectedAliasForMails.alias}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <a
+                    href={`https://mail.proton.me/u/0/almost-all-mail#keyword=${encodeURIComponent(selectedAliasForMails.alias.split('@')[0])}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="proton-jump-btn"
+                    title="Search and read this alias in ProtonMail"
+                  >
+                    <ExternalLink size={13} />
+                    <span>Open in Proton</span>
+                  </a>
+                  <button onClick={() => setSelectedAliasForMails(null)} className="copy-btn">
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="mail-reader-body">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '10px', borderBottom: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-dim)' }}>
+                    Isolated Mailbox &bull; {aliasSpecificActivities.length} {aliasSpecificActivities.length === 1 ? 'Message' : 'Messages'}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--emerald)' }}>
+                    Routing to loneewolf15@protonmail.com
+                  </div>
+                </div>
+
+                {aliasSpecificActivities.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-dim)' }}>
+                    <Inbox size={38} style={{ margin: '0 auto 10px auto', opacity: 0.3 }} />
+                    <h4 style={{ color: 'var(--text-main)', fontSize: '15px', marginBottom: '4px' }}>
+                      No Messages for this Alias
+                    </h4>
+                    <p style={{ fontSize: '13px', maxWidth: '380px', margin: '0 auto' }}>
+                      Emails sent to <strong>{selectedAliasForMails.alias}</strong> will appear here exclusively.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="activity-list">
+                    {aliasSpecificActivities.map((act, idx) => (
+                      <div
+                        key={idx}
+                        className="activity-item"
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => setSelectedEmail({ ...act, aliasName: selectedAliasForMails.full_name, aliasEmail: selectedAliasForMails.alias })}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                            <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>
+                              From:
+                            </span>
+                            <span className="activity-from-pill">
+                              {act.from}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' }}>
+                            Received via SimpleLogin Relay
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                            {act.timestamp ? new Date(act.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent'}
+                          </span>
+                          <span className="btn btn-secondary btn-sm" style={{ padding: '4px 10px', fontSize: '11px' }}>
+                            Read Contents
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 2: Full Email Content Reader */}
+        {selectedEmail && (
+          <div className="modal-overlay" onClick={() => setSelectedEmail(null)}>
+            <div className="mail-reader-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="mail-reader-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Inbox size={18} color="var(--cyan)" />
+                  <span style={{ fontSize: '15px', fontWeight: 700 }}>Email Content &amp; Delivery Trace</span>
+                </div>
+                <button onClick={() => setSelectedEmail(null)} className="copy-btn">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="mail-reader-body">
+                {/* Subject Banner */}
+                <div className="email-subject-box">
+                  <div className="email-subject-title">
+                    Message from {selectedEmail.from}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
+                    Delivered via SimpleLogin to your ProtonMail inbox
+                  </div>
+
+                  <div className="email-meta-grid">
+                    <div className="email-meta-item">
+                      <span className="email-meta-label">From</span>
+                      <span className="email-meta-val" title={selectedEmail.from}>{selectedEmail.from}</span>
+                    </div>
+
+                    <div className="email-meta-item">
+                      <span className="email-meta-label">To (Your Alias)</span>
+                      <span className="email-meta-val" title={selectedEmail.to || selectedEmail.aliasEmail}>
+                        {selectedEmail.aliasName} ({selectedEmail.to || selectedEmail.aliasEmail})
+                      </span>
+                    </div>
+
+                    <div className="email-meta-item">
+                      <span className="email-meta-label">Delivered To</span>
+                      <span className="email-meta-val">loneewolf15@protonmail.com</span>
+                    </div>
+
+                    <div className="email-meta-item">
+                      <span className="email-meta-label">Date &amp; Time</span>
+                      <span className="email-meta-val">
+                        {selectedEmail.timestamp ? new Date(selectedEmail.timestamp * 1000).toLocaleString() : 'Recent'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Direct Action Bar */}
+                <div className="email-action-bar">
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-main)' }}>
+                      Full Encrypted Message Payload
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
+                      The raw message was forwarded directly to your ProtonMail inbox.
+                    </div>
+                  </div>
+
+                  <a
+                    href={`https://mail.proton.me/u/0/almost-all-mail#keyword=${encodeURIComponent((selectedEmail.to || selectedEmail.aliasEmail || '').split('@')[0])}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="proton-jump-btn"
+                  >
+                    <ExternalLink size={14} />
+                    <span>Read Full Body in ProtonMail</span>
+                  </a>
+                </div>
+
+                {/* Anonymous Reverse-Alias Reply Box */}
+                {selectedEmail.reverse_alias_address && (
+                  <div>
+                    <div style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 700, letterSpacing: '0.04em', marginBottom: '8px' }}>
+                      Reply Privately Without Exposing Your Real Email:
+                    </div>
+                    <div className="reply-address-box">
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: '#67e8f9', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {selectedEmail.reverse_alias_address}
+                      </span>
+                      <a
+                        href={`mailto:${selectedEmail.reverse_alias_address}`}
+                        className="btn btn-secondary btn-sm"
+                        style={{ gap: '6px' }}
+                      >
+                        <Send size={12} />
+                        <span>Reply</span>
+                      </a>
+                    </div>
+                  </div>
+                )}
+
+                {/* Educational Privacy Architecture Notice */}
+                <div className="privacy-notice-box">
+                  <strong>🔒 Zero-Retention Privacy Architecture:</strong> SimpleLogin functions strictly as an anonymous proxy relay. To protect your confidentiality, message bodies are encrypted on-the-fly and immediately passed to <code>loneewolf15@protonmail.com</code> without retaining copies on SimpleLogin cloud. Clicking <strong>Read Full Body in ProtonMail</strong> takes you right to the email.
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
