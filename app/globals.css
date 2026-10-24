@@ -1042,6 +1042,110 @@ body {
   word-break: break-word;
 }
 
+/* Provider Badges & Pills */
+.provider-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.provider-badge.inbox {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.provider-badge.simplelogin {
+  background: rgba(139, 92, 246, 0.15);
+  color: #c4b5fd;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.provider-badge.addy {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fde68a;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/* Provider Selector Segmented Bar */
+.provider-selector-bar {
+  display: flex;
+  background: rgba(15, 23, 42, 0.7);
+  padding: 4px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  gap: 4px;
+  width: fit-content;
+  margin-bottom: 18px;
+}
+
+.provider-btn-pill {
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.provider-btn-pill:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.provider-btn-pill.active {
+  background: var(--bg-card-hover);
+  color: var(--text-main);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-subtle);
+}
+
+.provider-btn-pill.active.inbox {
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #34d399;
+}
+
+.provider-btn-pill.active.simplelogin {
+  border-color: rgba(139, 92, 246, 0.4);
+  color: #c4b5fd;
+}
+
+.provider-btn-pill.active.addy {
+  border-color: rgba(245, 158, 11, 0.4);
+  color: #fde68a;
+}
+
+/* In-App Direct Body HTML Reader Box */
+.html-body-container {
+  background: #ffffff;
+  color: #1e293b;
+  border-radius: var(--radius-sm);
+  padding: 20px;
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.html-body-container a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
 /* Relay & Proton Link Action Bar */
 .email-action-bar {
   display: flex;
@@ -1115,4 +1219,5 @@ body {
     flex-wrap: wrap;
   }
 }
+
 

@@ -24,7 +24,12 @@ import {
   ExternalLink,
   ChevronRight,
   User,
-  Filter
+  Filter,
+  Eye,
+  Globe,
+  Radio,
+  FileText,
+  Code
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -32,11 +37,15 @@ export default function Dashboard() {
   const [aliases, setAliases] = useState([]);
   const [history, setHistory] = useState([]);
   const [activities, setActivities] = useState([]);
-  const [activityStats, setActivityStats] = useState({ totalForwarded: 0, destinationMailbox: 'loneewolf15@protonmail.com' });
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [deletingAll, setDeletingAll] = useState(false);
+
+  // Selected Provider Filter & Form Provider
+  // 'all' | 'inbox' | 'simplelogin' | 'addy'
+  const [selectedProvider, setSelectedProvider] = useState('all');
+  const [generatorProvider, setGeneratorProvider] = useState('inbox'); // default to Direct In-App Inbox
 
   // Form State
   const [count, setCount] = useState(1);
@@ -44,10 +53,12 @@ export default function Dashboard() {
   const [label, setLabel] = useState('');
   const [activeTab, setActiveTab] = useState('active'); // 'active' | 'inbox' | 'preview' | 'history'
 
-  // Per-Alias Mailbox & Content Reader States
+  // Per-Alias Mailbox & Direct In-App Content Reader States
   const [selectedAliasForMails, setSelectedAliasForMails] = useState(null);
+  const [aliasInboxMessages, setAliasInboxMessages] = useState([]);
+  const [loadingAliasMails, setLoadingAliasMails] = useState(false);
   const [selectedEmail, setSelectedEmail] = useState(null);
-  const [aliasFilterId, setAliasFilterId] = useState('all');
+  const [viewBodyMode, setViewBodyMode] = useState('html'); // 'html' | 'text'
 
   // Previews
   const [previewList, setPreviewList] = useState([]);
@@ -77,7 +88,7 @@ export default function Dashboard() {
       setLoading(true);
       const [statusRes, aliasesRes, activitiesRes] = await Promise.all([
         fetch('/api/status'),
-        fetch('/api/aliases'),
+        fetch(`/api/aliases?provider=${selectedProvider}`),
         fetch('/api/activities')
       ]);
 
@@ -92,18 +103,14 @@ export default function Dashboard() {
       if (activitiesRes.ok) {
         const actData = await activitiesRes.json();
         setActivities(actData.activities || []);
-        setActivityStats({
-          totalForwarded: actData.totalForwarded || 0,
-          destinationMailbox: actData.destinationMailbox || 'loneewolf15@protonmail.com'
-        });
       }
     } catch (err) {
       console.error('Fetch error:', err);
-      showToast('Failed to sync with SimpleLogin server', 'error');
+      showToast('Failed to sync with alias services', 'error');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedProvider]);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -134,6 +141,59 @@ export default function Dashboard() {
     }
   }, [count, category]);
 
+  // Open per-alias mailbox drawer & load messages
+  const handleOpenAliasMailbox = async (aliasItem) => {
+    setSelectedAliasForMails(aliasItem);
+    setAliasInboxMessages([]);
+    setLoadingAliasMails(true);
+
+    try {
+      const res = await fetch(`/api/messages?aliasId=${encodeURIComponent(aliasItem.id)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.provider === 'inbox') {
+          setAliasInboxMessages(data.messages || []);
+        } else if (data.provider === 'simplelogin') {
+          setAliasInboxMessages(data.activities || []);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching mailbox for alias:', err);
+    } finally {
+      setLoadingAliasMails(false);
+    }
+  };
+
+  // Open specific message and load full body
+  const handleOpenMessage = async (msg, aliasItem) => {
+    if (aliasItem.provider === 'inbox') {
+      try {
+        const res = await fetch(`/api/messages?aliasId=${encodeURIComponent(aliasItem.id)}&messageId=${encodeURIComponent(msg.id)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setSelectedEmail({
+            ...msg,
+            fullDetails: data.message,
+            aliasName: aliasItem.full_name,
+            aliasEmail: aliasItem.alias,
+            provider: 'inbox'
+          });
+          return;
+        }
+      } catch (e) {
+        console.error('Error fetching full message:', e);
+      }
+    }
+
+    // Default for SimpleLogin relay activities
+    setSelectedEmail({
+      ...msg,
+      aliasName: aliasItem.full_name,
+      aliasEmail: aliasItem.alias,
+      provider: aliasItem.provider
+    });
+  };
+
   useEffect(() => {
     refreshData();
   }, [refreshData]);
@@ -158,9 +218,10 @@ export default function Dashboard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          count: fillRemaining ? undefined : count,
+          count: fillRemaining ? 10 : count,
           category,
           label,
+          provider: generatorProvider,
           fillRemaining
         })
       });
@@ -173,7 +234,7 @@ export default function Dashboard() {
       }
 
       if (data.createdCount > 0) {
-        showToast(`Created ${data.createdCount} new alias(es)!`);
+        showToast(`Created ${data.createdCount} new alias(es) on ${generatorProvider.toUpperCase()}!`);
       }
 
       if (data.hitRateLimit) {
@@ -189,20 +250,20 @@ export default function Dashboard() {
   };
 
   // Handle Delete Single
-  const handleDeleteSingle = async (id, email) => {
-    if (!window.confirm(`Are you sure you want to delete alias ${email}?`)) {
+  const handleDeleteSingle = async (item) => {
+    if (!window.confirm(`Delete alias ${item.alias}?`)) {
       return;
     }
-    setDeletingId(id);
+    setDeletingId(item.id);
     try {
-      const res = await fetch(`/api/aliases?id=${encodeURIComponent(id)}`, {
+      const res = await fetch(`/api/aliases?id=${encodeURIComponent(item.id)}&provider=${encodeURIComponent(item.provider || 'simplelogin')}`, {
         method: 'DELETE'
       });
       const data = await res.json();
       if (res.ok) {
-        showToast(`Deleted ${email}`);
-        setAliases(prev => prev.filter(a => a.id !== id));
-        if (selectedAliasForMails?.id === id) {
+        showToast(`Deleted ${item.alias}`);
+        setAliases(prev => prev.filter(a => a.id !== item.id));
+        if (selectedAliasForMails?.id === item.id) {
           setSelectedAliasForMails(null);
         }
         refreshData();
@@ -220,12 +281,12 @@ export default function Dashboard() {
   const handleDeleteAll = async () => {
     setDeletingAll(true);
     try {
-      const res = await fetch('/api/aliases?all=true', {
+      const res = await fetch(`/api/aliases?all=true&provider=${encodeURIComponent(selectedProvider)}`, {
         method: 'DELETE'
       });
       const data = await res.json();
       if (res.ok) {
-        showToast(data.message || 'All aliases deleted! 10 spots freed up.');
+        showToast(data.message || 'Aliases deleted successfully.');
         setAliases([]);
         setSelectedAliasForMails(null);
         setSelectedEmail(null);
@@ -241,143 +302,171 @@ export default function Dashboard() {
     }
   };
 
-  const quotaMax = status?.account?.quotaMax || 10;
-  const activeCount = aliases.length;
-  const availableSlots = Math.max(0, quotaMax - activeCount);
-  const quotaPercent = Math.min(100, Math.round((activeCount / quotaMax) * 100));
-  const totalMailsForwarded = aliases.reduce((acc, a) => acc + (a.nb_forward || 0), 0);
+  // Provider Stats
+  const inboxInfo = status?.providers?.inbox;
+  const slInfo = status?.providers?.simplelogin;
+  const addyInfo = status?.providers?.addy;
+  const totalHistorical = status?.stats?.totalHistoricalCreated || 0;
 
-  // Filter activities for global tab
-  const filteredActivities = aliasFilterId === 'all'
-    ? activities
-    : activities.filter(a => a.aliasId === aliasFilterId || a.aliasEmail === aliasFilterId);
-
-  // Activities strictly for selectedAliasForMails modal
-  const aliasSpecificActivities = selectedAliasForMails
-    ? activities.filter(a => (
-        String(a.aliasId) === String(selectedAliasForMails.id) ||
-        (a.aliasEmail && a.aliasEmail.toLowerCase() === selectedAliasForMails.alias.toLowerCase()) ||
-        (a.to && a.to.toLowerCase() === selectedAliasForMails.alias.toLowerCase())
-      ))
-    : [];
+  // Active counts
+  const inboxActive = aliases.filter(a => a.provider === 'inbox').length;
+  const slActive = aliases.filter(a => a.provider === 'simplelogin').length;
+  const addyActive = aliases.filter(a => a.provider === 'addy').length;
 
   return (
     <>
       <div className="bg-grid" />
       <div className="container">
-        {/* Header with Destination Mailbox Indicator */}
+        {/* Header with Multi-Provider Indicator */}
         <header className="header">
           <div className="brand-wrapper">
             <span className="brand-flag" role="img" aria-label="Nigeria">🇳🇬</span>
             <div>
               <h1 className="brand-title">NaijaAlias</h1>
               <p className="brand-subtitle">
-                Nigerian Identity & SimpleLogin Aliases
+                Nigerian Identity &bull; Direct In-App Inbox &bull; SimpleLogin &bull; addy.io
               </p>
             </div>
           </div>
 
-          {/* Primary Mailbox Route (Apple-style Translucent Chrome) */}
-          <div className="mailbox-target-pill">
-            <div className="mailbox-icon-wrap" title="Primary Destination Mailbox">
-              <Shield size={14} />
-            </div>
-            <div>
-              <div style={{ fontSize: '10px', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.04em' }}>
-                Forwarding Destination
+          {/* Provider Destination Chips (Apple Glass Style) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {/* In-App Direct Chip */}
+            <div className="mailbox-target-pill" title="Read full email bodies directly in-app with zero custom domain">
+              <div className="mailbox-icon-wrap" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
+                <Eye size={13} />
               </div>
-              <div className="mailbox-target-address">
-                loneewolf15@protonmail.com
+              <div>
+                <div style={{ fontSize: '9px', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.04em' }}>
+                  In-App Direct Reader
+                </div>
+                <div className="mailbox-target-address" style={{ fontSize: '11px', color: '#34d399' }}>
+                  Direct HTML Body &bull; 0 Domain Needed
+                </div>
               </div>
+              <span className="provider-badge inbox" style={{ fontSize: '9px', padding: '2px 6px' }}>
+                Instant
+              </span>
             </div>
-            <span className="mailbox-verified-badge">
-              ✓ Active
-            </span>
+
+            {/* SimpleLogin Chip */}
+            <div className="mailbox-target-pill" title="SimpleLogin Relay">
+              <div className="mailbox-icon-wrap" style={{ background: 'rgba(139, 92, 246, 0.15)', color: '#c4b5fd' }}>
+                <Shield size={13} />
+              </div>
+              <div>
+                <div style={{ fontSize: '9px', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.04em' }}>
+                  SimpleLogin Relay
+                </div>
+                <div className="mailbox-target-address" style={{ fontSize: '11px' }}>
+                  loneewolf15@protonmail.com
+                </div>
+              </div>
+              <span className="provider-badge simplelogin" style={{ fontSize: '9px', padding: '2px 6px' }}>
+                10 Free
+              </span>
+            </div>
+
+            {/* addy.io Chip */}
+            <div className="mailbox-target-pill" title="addy.io Relay (Limit Booster)">
+              <div className="mailbox-icon-wrap" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fde68a' }}>
+                <Zap size={13} />
+              </div>
+              <div>
+                <div style={{ fontSize: '9px', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.04em' }}>
+                  addy.io Booster
+                </div>
+                <div className="mailbox-target-address" style={{ fontSize: '11px' }}>
+                  anonymoux7x@gmail.com
+                </div>
+              </div>
+              <span className="provider-badge addy" style={{ fontSize: '9px', padding: '2px 6px' }}>
+                +20/Day
+              </span>
+            </div>
+
             <button
               onClick={refreshData}
               disabled={loading}
               className="copy-btn"
-              title="Sync with SimpleLogin"
-              style={{ marginLeft: '4px' }}
+              title="Sync all providers"
+              style={{ padding: '8px' }}
             >
               <RefreshCw size={14} className={loading ? 'spin' : ''} />
             </button>
           </div>
         </header>
 
-        {/* Dashboard Top Metrics */}
+        {/* Dashboard Metrics (4 Core Engines) */}
         <section className="dashboard-metrics">
-          {/* Metric 1: Active Quota */}
-          <div className="metric-card">
-            <div className="metric-label">
-              <span>Active Quota</span>
-              <ShieldCheck size={16} color="var(--emerald)" />
-            </div>
-            <div className="metric-value-row">
-              <span className="metric-value-huge">{activeCount}</span>
-              <span className="metric-value-sub">/ {quotaMax} Spots In Use</span>
-            </div>
-            <div className="quota-bar-track">
-              <div
-                className={`quota-bar-fill ${activeCount >= 10 ? 'full' : activeCount >= 7 ? 'warning' : ''}`}
-                style={{ width: `${quotaPercent}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Metric 2: Mails Forwarded (Elevated) */}
+          {/* Card 1: Direct In-App Inbox */}
           <div
             className="metric-card"
-            style={{ cursor: 'pointer' }}
-            onClick={() => setActiveTab('inbox')}
-            title="Click to view all forwarded emails"
+            style={{ cursor: 'pointer', borderTop: '2px solid rgba(16, 185, 129, 0.5)' }}
+            onClick={() => { setSelectedProvider('inbox'); setGeneratorProvider('inbox'); }}
           >
             <div className="metric-label">
-              <span>Mails Forwarded</span>
-              <Inbox size={16} color="var(--cyan)" />
+              <span>Direct In-App Inbox</span>
+              <span className="provider-badge inbox">Direct Body</span>
             </div>
             <div className="metric-value-row">
-              <span className="metric-value-huge" style={{ color: totalMailsForwarded > 0 ? '#67e8f9' : 'var(--text-main)' }}>
-                {totalMailsForwarded}
-              </span>
-              <span className="metric-value-sub">Delivered to loneewolf15</span>
+              <span className="metric-value-huge" style={{ color: '#34d399' }}>{inboxActive}</span>
+              <span className="metric-value-sub">Active Inboxes</span>
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--cyan)', marginTop: '14px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span>View live forwarded log</span>
-              <ArrowUpRight size={13} />
+            <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span>Read complete HTML/text inside app &bull; Zero domain required</span>
             </div>
           </div>
 
-          {/* Metric 3: Available Spots */}
-          <div className="metric-card">
+          {/* Card 2: SimpleLogin Quota */}
+          <div
+            className="metric-card"
+            style={{ cursor: 'pointer', borderTop: '2px solid rgba(139, 92, 246, 0.5)' }}
+            onClick={() => { setSelectedProvider('simplelogin'); setGeneratorProvider('simplelogin'); }}
+          >
             <div className="metric-label">
-              <span>Available Slots</span>
-              <Zap size={16} color="var(--amber)" />
+              <span>SimpleLogin Relay</span>
+              <span className="provider-badge simplelogin">ProtonMail</span>
             </div>
             <div className="metric-value-row">
-              <span className="metric-value-huge" style={{ color: availableSlots > 0 ? '#fde68a' : 'var(--rose)' }}>
-                {availableSlots}
-              </span>
-              <span className="metric-value-sub">Ready to allocate</span>
+              <span className="metric-value-huge" style={{ color: '#c4b5fd' }}>{slInfo?.activeCount || slActive}</span>
+              <span className="metric-value-sub">/ {slInfo?.quotaMax || 10} Slots</span>
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '14px' }}>
-              Free Tier limit: 10 active aliases
+            <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '12px' }}>
+              Forwards to loneewolf15@protonmail.com
             </div>
           </div>
 
-          {/* Metric 4: Historical Uniqueness */}
-          <div className="metric-card">
+          {/* Card 3: addy.io Quota (Limit Booster) */}
+          <div
+            className="metric-card"
+            style={{ cursor: 'pointer', borderTop: '2px solid rgba(245, 158, 11, 0.5)' }}
+            onClick={() => { setSelectedProvider('addy'); setGeneratorProvider('addy'); }}
+          >
             <div className="metric-label">
-              <span>Unique Identities</span>
-              <Layers size={16} color="var(--violet)" />
+              <span>addy.io Booster</span>
+              <span className="provider-badge addy">+20 Aliases</span>
             </div>
             <div className="metric-value-row">
-              <span className="metric-value-huge" style={{ color: '#c4b5fd' }}>
-                {status?.stats?.totalHistoricalCreated || 0}
-              </span>
-              <span className="metric-value-sub">Created across cycles</span>
+              <span className="metric-value-huge" style={{ color: '#fde68a' }}>{addyInfo?.activeCount || addyActive}</span>
+              <span className="metric-value-sub">/ 20+ Active</span>
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '14px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '12px' }}>
+              Forwards to anonymoux7x@gmail.com
+            </div>
+          </div>
+
+          {/* Card 4: Historical Uniqueness */}
+          <div className="metric-card">
+            <div className="metric-label">
+              <span>Historical Ledger</span>
+              <Layers size={16} color="var(--cyan)" />
+            </div>
+            <div className="metric-value-row">
+              <span className="metric-value-huge" style={{ color: '#67e8f9' }}>{totalHistorical}</span>
+              <span className="metric-value-sub">Identities Tracked</span>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '12px' }}>
               Zero duplicate combinations ever recreated
             </div>
           </div>
@@ -388,20 +477,55 @@ export default function Dashboard() {
           <div className="panel-header">
             <h2 className="panel-title">
               <Sparkles size={20} color="var(--emerald)" />
-              Alias Generator Controls
+              Generate Nigerian Aliases
             </h2>
 
             <div className="panel-actions">
-              {activeCount > 0 && (
+              {aliases.length > 0 && (
                 <button
                   onClick={() => setShowDeleteAllModal(true)}
                   className="btn btn-danger btn-sm"
-                  title="Delete all active aliases to reset your 10 free spots"
+                  title="Flush aliases to reset quota"
                 >
                   <Trash2 size={14} />
-                  Flush All ({activeCount}) & Reset Quota
+                  Flush ({aliases.length}) &amp; Reset
                 </button>
               )}
+            </div>
+          </div>
+
+          {/* Choose Generator Engine */}
+          <div style={{ marginBottom: '16px' }}>
+            <label className="form-label" style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Radio size={14} color="var(--emerald)" /> Select Target Engine:
+            </label>
+            <div className="provider-selector-bar">
+              <button
+                type="button"
+                className={`provider-btn-pill ${generatorProvider === 'inbox' ? 'active inbox' : ''}`}
+                onClick={() => setGeneratorProvider('inbox')}
+              >
+                <Eye size={13} />
+                <span>📬 In-App Direct Inbox (Full Body Reader &bull; No Domain)</span>
+              </button>
+
+              <button
+                type="button"
+                className={`provider-btn-pill ${generatorProvider === 'simplelogin' ? 'active simplelogin' : ''}`}
+                onClick={() => setGeneratorProvider('simplelogin')}
+              >
+                <Shield size={13} />
+                <span>🔒 SimpleLogin (Relay to ProtonMail &bull; 10 Limit)</span>
+              </button>
+
+              <button
+                type="button"
+                className={`provider-btn-pill ${generatorProvider === 'addy' ? 'active addy' : ''}`}
+                onClick={() => setGeneratorProvider('addy')}
+              >
+                <Zap size={13} />
+                <span>⚡ addy.io (Relay to Gmail &bull; +20 Limit Booster)</span>
+              </button>
             </div>
           </div>
 
@@ -423,7 +547,7 @@ export default function Dashboard() {
             <div className="form-group">
               <label className="form-label">Quantity</label>
               <div className="pill-group">
-                {[1, 3, 5].map((num) => (
+                {[1, 3, 5, 10].map((num) => (
                   <button
                     key={num}
                     type="button"
@@ -433,22 +557,15 @@ export default function Dashboard() {
                     +{num}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  className={`count-pill ${count === 10 ? 'active' : ''}`}
-                  onClick={() => setCount(10)}
-                >
-                  10
-                </button>
               </div>
             </div>
 
             <div className="form-group">
-              <label className="form-label">Custom Label / Prefix (Optional)</label>
+              <label className="form-label">Custom Tag / Note (Optional)</label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="e.g. Work, Crypto, Shopping"
+                placeholder="e.g. Work, Shopping, Crypto"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
               />
@@ -458,7 +575,7 @@ export default function Dashboard() {
           <div className="btn-row">
             <button
               onClick={() => handleGenerate(false)}
-              disabled={generating || availableSlots <= 0}
+              disabled={generating}
               className="btn btn-primary"
             >
               {generating ? (
@@ -467,19 +584,19 @@ export default function Dashboard() {
                 </>
               ) : (
                 <>
-                  <Plus size={16} /> Generate {count} Alias{count > 1 ? 'es' : ''}
+                  <Plus size={16} /> Generate {count} Alias{count > 1 ? 'es' : ''} on {generatorProvider.toUpperCase()}
                 </>
               )}
             </button>
 
-            {availableSlots > 0 && availableSlots <= 10 && (
+            {generatorProvider === 'simplelogin' && (slInfo?.availableSlots || 0) > 0 && (
               <button
                 onClick={() => handleGenerate(true)}
                 disabled={generating}
                 className="btn btn-fill"
-                title="Automatically generate aliases to fill remaining quota"
+                title="Fill remaining SimpleLogin slots"
               >
-                <Zap size={16} /> Auto-Fill All {availableSlots} Remaining Spot{availableSlots > 1 ? 's' : ''}
+                <Zap size={16} /> Fill Remaining {slInfo.availableSlots} SimpleLogin Spots
               </button>
             )}
 
@@ -492,22 +609,13 @@ export default function Dashboard() {
             >
               <Clock size={16} /> Preview Names Offline
             </button>
-
-            {availableSlots <= 0 && (
-              <span style={{ fontSize: '13px', color: 'var(--rose)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <AlertCircle size={15} /> Quota Full (10/10). Delete existing aliases below to free up space.
-              </span>
-            )}
           </div>
 
           {rateLimitMessage && (
             <div className="rate-limit-banner">
               <AlertCircle size={20} style={{ flexShrink: 0, marginTop: '2px' }} />
               <div>
-                <strong>SimpleLogin Rate Limit Reached (5 aliases/min):</strong> {rateLimitMessage}
-                <div style={{ marginTop: '4px', fontSize: '12px', opacity: 0.9 }}>
-                  Wait approx 60 seconds, then click <strong>Auto-Fill</strong> to complete the batch!
-                </div>
+                <strong>Rate Limit Notice:</strong> {rateLimitMessage}
               </div>
             </div>
           )}
@@ -529,10 +637,8 @@ export default function Dashboard() {
             onClick={() => setActiveTab('inbox')}
           >
             <Inbox size={15} />
-            <span>Forwarded Mails Log</span>
-            <span className="tab-count-pill" style={{ background: totalMailsForwarded > 0 ? 'rgba(6, 182, 212, 0.2)' : undefined, color: totalMailsForwarded > 0 ? '#67e8f9' : undefined }}>
-              {totalMailsForwarded}
-            </span>
+            <span>Relayed Log</span>
+            <span className="tab-count-pill">{activities.length}</span>
           </button>
 
           <button
@@ -552,24 +658,62 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* TAB 1: Active Aliases Board */}
+        {/* TAB 1: Active Aliases Board (with Provider Filter) */}
         {activeTab === 'active' && (
           <div>
+            {/* Filter by Provider Pills */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+              <div className="provider-selector-bar" style={{ margin: 0 }}>
+                <button
+                  className={`provider-btn-pill ${selectedProvider === 'all' ? 'active' : ''}`}
+                  onClick={() => setSelectedProvider('all')}
+                >
+                  <Globe size={13} />
+                  <span>All Providers ({aliases.length})</span>
+                </button>
+                <button
+                  className={`provider-btn-pill ${selectedProvider === 'inbox' ? 'active inbox' : ''}`}
+                  onClick={() => setSelectedProvider('inbox')}
+                >
+                  <Eye size={13} />
+                  <span>In-App Inbox ({inboxActive})</span>
+                </button>
+                <button
+                  className={`provider-btn-pill ${selectedProvider === 'simplelogin' ? 'active simplelogin' : ''}`}
+                  onClick={() => setSelectedProvider('simplelogin')}
+                >
+                  <Shield size={13} />
+                  <span>SimpleLogin ({slActive})</span>
+                </button>
+                <button
+                  className={`provider-btn-pill ${selectedProvider === 'addy' ? 'active addy' : ''}`}
+                  onClick={() => setSelectedProvider('addy')}
+                >
+                  <Zap size={13} />
+                  <span>addy.io ({addyActive})</span>
+                </button>
+              </div>
+
+              <div style={{ fontSize: '13px', color: 'var(--text-dim)' }}>
+                Showing <strong>{aliases.length}</strong> active alias{aliases.length === 1 ? '' : 'es'}
+              </div>
+            </div>
+
             {aliases.length === 0 ? (
               <div className="empty-state">
                 <Mail className="empty-icon" />
                 <h3 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-main)', marginBottom: '8px' }}>
-                  No Active Aliases Found
+                  No Active Aliases for {selectedProvider.toUpperCase()}
                 </h3>
                 <p style={{ maxWidth: '440px', margin: '0 auto 20px auto', fontSize: '14px', lineHeight: 1.5 }}>
-                  You currently have all 10 free spots available on SimpleLogin. Use the generator controls above to create authentic Nigerian email aliases!
+                  Use the generator controls above to create authentic Nigerian email aliases on your chosen engine!
                 </p>
                 <button
-                  onClick={() => handleGenerate(true)}
+                  onClick={() => handleGenerate(false)}
                   disabled={generating}
                   className="btn btn-primary"
                 >
-                  <Zap size={16} /> Generate 10 Fresh Aliases Now
+                  <Plus size={16} /> Generate Aliases Now
                 </button>
               </div>
             ) : (
@@ -579,7 +723,9 @@ export default function Dashboard() {
                     ? item.full_name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
                     : 'NA';
                   const catClass = (item.category || 'common').toLowerCase();
-                  const forwards = item.nb_forward || 0;
+                  const isInbox = item.provider === 'inbox';
+                  const isSimpleLogin = item.provider === 'simplelogin';
+                  const isAddy = item.provider === 'addy';
 
                   return (
                     <div key={item.id || index} className="alias-card">
@@ -589,17 +735,22 @@ export default function Dashboard() {
                             <div className="avatar-circle">{initials}</div>
                             <div>
                               <div className="alias-name">{item.full_name}</div>
-                              <span className={`category-tag ${catClass}`}>
-                                {item.category || 'Nigerian'}
-                              </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '3px' }}>
+                                <span className={`category-tag ${catClass}`}>
+                                  {item.category || 'Nigerian'}
+                                </span>
+                                <span className={`provider-badge ${item.provider || 'simplelogin'}`}>
+                                  {isInbox ? 'Direct In-App' : isAddy ? 'addy.io' : 'SimpleLogin'}
+                                </span>
+                              </div>
                             </div>
                           </div>
 
                           <button
-                            onClick={() => handleDeleteSingle(item.id, item.alias)}
+                            onClick={() => handleDeleteSingle(item)}
                             disabled={deletingId === item.id}
                             className="copy-btn"
-                            title="Delete this alias on SimpleLogin"
+                            title="Delete this alias"
                             style={{ color: 'var(--rose)' }}
                           >
                             {deletingId === item.id ? (
@@ -630,23 +781,41 @@ export default function Dashboard() {
 
                       {/* Card Footer: Per-Alias Mailbox Trigger */}
                       <div className="card-footer-clean">
-                        <button
-                          onClick={() => setSelectedAliasForMails(item)}
-                          className={`received-count-badge ${forwards > 0 ? 'has-mails' : ''}`}
-                          style={{ cursor: 'pointer', border: forwards > 0 ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid var(--border-subtle)' }}
-                          title={`Click to open isolated mailbox for ${item.full_name}`}
-                        >
-                          <Inbox size={13} />
-                          <span>{forwards === 1 ? '1 Mail Received' : `${forwards} Mails Received`}</span>
-                          {forwards > 0 && <ChevronRight size={13} style={{ marginLeft: '2px', opacity: 0.8 }} />}
-                        </button>
+                        {isInbox ? (
+                          <button
+                            onClick={() => handleOpenAliasMailbox(item)}
+                            className="received-count-badge has-mails"
+                            style={{ cursor: 'pointer', border: '1px solid rgba(16, 185, 129, 0.4)' }}
+                            title="Open direct in-app email reader for this alias"
+                          >
+                            <Eye size={13} />
+                            <span>Read Full Mails (In-App)</span>
+                            <ChevronRight size={13} style={{ marginLeft: '2px', opacity: 0.8 }} />
+                          </button>
+                        ) : isSimpleLogin ? (
+                          <button
+                            onClick={() => handleOpenAliasMailbox(item)}
+                            className={`received-count-badge ${item.nb_forward > 0 ? 'has-mails' : ''}`}
+                            style={{ cursor: 'pointer' }}
+                            title="View forwarding details & ProtonMail jump"
+                          >
+                            <Inbox size={13} />
+                            <span>{item.nb_forward || 0} Delivered to Proton</span>
+                            <ChevronRight size={13} style={{ marginLeft: '2px', opacity: 0.8 }} />
+                          </button>
+                        ) : (
+                          <div className="received-count-badge">
+                            <Zap size={13} />
+                            <span>{item.nb_forward || 0} Delivered to Gmail</span>
+                          </div>
+                        )}
 
                         <button
-                          onClick={() => setSelectedAliasForMails(item)}
+                          onClick={() => handleOpenAliasMailbox(item)}
                           className="view-mails-btn"
-                          title={`Preview mails for ${item.full_name}`}
+                          title={`Open isolated mailbox for ${item.full_name}`}
                         >
-                          <span>{forwards > 0 ? 'Open Mailbox' : 'Mailbox'}</span>
+                          <span>{isInbox ? 'Read Inbox' : 'Details'}</span>
                           <ArrowUpRight size={13} />
                         </button>
                       </div>
@@ -658,7 +827,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* TAB 2: Forwarded Mail Feed / Live Inbox (With Per-Alias Filter) */}
+        {/* TAB 2: Relayed Mail Feed / SimpleLogin Log */}
         {activeTab === 'inbox' && (
           <div className="glass-panel" style={{ padding: '24px' }}>
             <div className="feed-header-banner">
@@ -668,10 +837,10 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <div className="feed-title">
-                    Emails Forwarded to loneewolf15@protonmail.com
+                    Relayed Messages Activity Feed
                   </div>
                   <div className="feed-subtitle">
-                    Real-time log of messages received by your Nigerian aliases and delivered straight to your Proton mailbox.
+                    Real-time log of relayed emails forwarded through SimpleLogin to loneewolf15@protonmail.com.
                   </div>
                 </div>
               </div>
@@ -681,59 +850,29 @@ export default function Dashboard() {
                 disabled={loading}
                 className="btn btn-secondary btn-sm"
               >
-                <RefreshCw size={13} className={loading ? 'spin' : ''} /> Check New Mails
+                <RefreshCw size={13} className={loading ? 'spin' : ''} /> Check Updates
               </button>
             </div>
 
-            {/* Per-Alias Filter Bar (Konsta UI Segmented Filter) */}
-            <div style={{ marginBottom: '18px' }}>
-              <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Filter size={12} /> Filter by Alias:
-              </div>
-              <div className="alias-filter-bar">
-                <button
-                  className={`alias-filter-pill ${aliasFilterId === 'all' ? 'active' : ''}`}
-                  onClick={() => setAliasFilterId('all')}
-                >
-                  All Aliases ({activities.length})
-                </button>
-                {aliases.map(a => {
-                  const countForAlias = activities.filter(act => String(act.aliasId) === String(a.id) || act.aliasEmail === a.alias).length;
-                  return (
-                    <button
-                      key={a.id}
-                      className={`alias-filter-pill ${aliasFilterId === a.id ? 'active' : ''}`}
-                      onClick={() => setAliasFilterId(a.id)}
-                    >
-                      <span>{a.full_name}</span>
-                      <span style={{ fontSize: '10px', opacity: 0.8 }}>({countForAlias})</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {filteredActivities.length === 0 ? (
+            {activities.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '50px 20px', color: 'var(--text-dim)' }}>
                 <Inbox size={42} style={{ margin: '0 auto 12px auto', opacity: 0.4 }} />
                 <h4 style={{ fontSize: '16px', color: 'var(--text-main)', marginBottom: '6px' }}>
-                  No Mails Found for this Selection
+                  No Relayed Messages Recorded Yet
                 </h4>
                 <p style={{ fontSize: '13px', maxWidth: '420px', margin: '0 auto' }}>
-                  {aliasFilterId === 'all'
-                    ? 'When someone sends an email to any of your active Nigerian aliases, SimpleLogin forwards it to loneewolf15@protonmail.com and records the delivery details here!'
-                    : 'This specific alias has not received any forwarded messages yet.'}
+                  When someone sends an email to any of your active relay aliases, delivery details appear here instantly.
                 </p>
               </div>
             ) : (
               <div className="activity-list">
-                {filteredActivities.map((act, idx) => (
+                {activities.map((act, idx) => (
                   <div
                     key={idx}
                     className="activity-item"
                     style={{ cursor: 'pointer' }}
                     onClick={() => setSelectedEmail(act)}
-                    title="Click to view full mail contents and reply"
+                    title="Click to view delivery trace"
                   >
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
@@ -778,7 +917,7 @@ export default function Dashboard() {
               <div>
                 <h3 style={{ fontSize: '17px', fontWeight: 700 }}>Upcoming Simulated Identifiers</h3>
                 <p style={{ fontSize: '13px', color: 'var(--text-dim)' }}>
-                  Preview authentic Nigerian names and proposed alias slugs before creating them on SimpleLogin.
+                  Preview authentic Nigerian names and proposed alias slugs before creating them.
                 </p>
               </div>
 
@@ -861,6 +1000,7 @@ export default function Dashboard() {
                     <tr>
                       <th>Full Name</th>
                       <th>Email Alias</th>
+                      <th>Provider</th>
                       <th>Category</th>
                       <th>Created At</th>
                       <th>Action</th>
@@ -872,6 +1012,11 @@ export default function Dashboard() {
                         <td style={{ fontWeight: 600 }}>{h.full_name}</td>
                         <td style={{ fontFamily: 'var(--font-mono)', color: '#a7f3d0' }}>
                           {h.alias}
+                        </td>
+                        <td>
+                          <span className={`provider-badge ${h.provider || 'inbox'}`}>
+                            {h.provider || 'inbox'}
+                          </span>
                         </td>
                         <td>
                           <span className={`category-tag ${(h.category || 'common').toLowerCase()}`}>
@@ -899,7 +1044,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* MODAL 1: Per-Alias Isolated Mailbox Drawer (Apple Design Sheet) */}
+        {/* MODAL 1: Per-Alias Isolated Mailbox Drawer (Direct In-App Reading) */}
         {selectedAliasForMails && (
           <div className="modal-overlay" onClick={() => setSelectedAliasForMails(null)}>
             <div className="mail-reader-sheet" onClick={(e) => e.stopPropagation()}>
@@ -909,8 +1054,13 @@ export default function Dashboard() {
                     {selectedAliasForMails.full_name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                   </div>
                   <div>
-                    <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-main)' }}>
-                      {selectedAliasForMails.full_name}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-main)' }}>
+                        {selectedAliasForMails.full_name}
+                      </div>
+                      <span className={`provider-badge ${selectedAliasForMails.provider || 'simplelogin'}`}>
+                        {selectedAliasForMails.provider === 'inbox' ? 'Direct In-App' : selectedAliasForMails.provider === 'addy' ? 'addy.io' : 'SimpleLogin'}
+                      </span>
                     </div>
                     <div style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', color: '#a7f3d0' }}>
                       {selectedAliasForMails.alias}
@@ -919,16 +1069,25 @@ export default function Dashboard() {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <a
-                    href={`https://mail.proton.me/u/0/almost-all-mail#keyword=${encodeURIComponent(selectedAliasForMails.alias.split('@')[0])}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="proton-jump-btn"
-                    title="Search and read this alias in ProtonMail"
+                  {selectedAliasForMails.provider === 'simplelogin' && (
+                    <a
+                      href={`https://mail.proton.me/u/0/almost-all-mail#keyword=${encodeURIComponent(selectedAliasForMails.alias.split('@')[0])}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="proton-jump-btn"
+                      title="Search and read this alias in ProtonMail"
+                    >
+                      <ExternalLink size={13} />
+                      <span>Open in Proton</span>
+                    </a>
+                  )}
+                  <button
+                    onClick={() => handleOpenAliasMailbox(selectedAliasForMails)}
+                    className="copy-btn"
+                    title="Refresh mailbox messages"
                   >
-                    <ExternalLink size={13} />
-                    <span>Open in Proton</span>
-                  </a>
+                    <RefreshCw size={14} className={loadingAliasMails ? 'spin' : ''} />
+                  </button>
                   <button onClick={() => setSelectedAliasForMails(null)} className="copy-btn">
                     <X size={18} />
                   </button>
@@ -938,31 +1097,40 @@ export default function Dashboard() {
               <div className="mail-reader-body">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '10px', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-dim)' }}>
-                    Isolated Mailbox &bull; {aliasSpecificActivities.length} {aliasSpecificActivities.length === 1 ? 'Message' : 'Messages'}
+                    Isolated Mailbox &bull; {aliasInboxMessages.length} {aliasInboxMessages.length === 1 ? 'Message' : 'Messages'}
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--emerald)' }}>
-                    Routing to loneewolf15@protonmail.com
+                    {selectedAliasForMails.provider === 'inbox'
+                      ? '✓ Direct In-App Reader Active (Click any mail to view full body)'
+                      : selectedAliasForMails.provider === 'addy'
+                      ? 'Forwarding to anonymoux7x@gmail.com'
+                      : 'Forwarding to loneewolf15@protonmail.com'}
                   </div>
                 </div>
 
-                {aliasSpecificActivities.length === 0 ? (
+                {loadingAliasMails ? (
+                  <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-dim)' }}>
+                    <RefreshCw size={24} className="spin" style={{ margin: '0 auto 10px auto' }} />
+                    <p>Checking incoming messages for this alias...</p>
+                  </div>
+                ) : aliasInboxMessages.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-dim)' }}>
                     <Inbox size={38} style={{ margin: '0 auto 10px auto', opacity: 0.3 }} />
                     <h4 style={{ color: 'var(--text-main)', fontSize: '15px', marginBottom: '4px' }}>
-                      No Messages for this Alias
+                      No Messages for this Alias Yet
                     </h4>
                     <p style={{ fontSize: '13px', maxWidth: '380px', margin: '0 auto' }}>
-                      Emails sent to <strong>{selectedAliasForMails.alias}</strong> will appear here exclusively.
+                      Emails sent to <strong>{selectedAliasForMails.alias}</strong> will appear here instantly.
                     </p>
                   </div>
                 ) : (
                   <div className="activity-list">
-                    {aliasSpecificActivities.map((act, idx) => (
+                    {aliasInboxMessages.map((msg, idx) => (
                       <div
                         key={idx}
                         className="activity-item"
                         style={{ cursor: 'pointer' }}
-                        onClick={() => setSelectedEmail({ ...act, aliasName: selectedAliasForMails.full_name, aliasEmail: selectedAliasForMails.alias })}
+                        onClick={() => handleOpenMessage(msg, selectedAliasForMails)}
                       >
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
@@ -970,20 +1138,25 @@ export default function Dashboard() {
                               From:
                             </span>
                             <span className="activity-from-pill">
-                              {act.from}
+                              {msg.from || msg.mail_from}
                             </span>
                           </div>
-                          <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' }}>
-                            Received via SimpleLogin Relay
+                          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginTop: '2px' }}>
+                            {msg.subject || msg.mail_subject || 'No Subject'}
                           </div>
+                          {msg.excerpt && (
+                            <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', maxWidth: '480px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {msg.excerpt}
+                            </div>
+                          )}
                         </div>
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                            {act.timestamp ? new Date(act.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent'}
+                            {msg.date || 'Recent'}
                           </span>
                           <span className="btn btn-secondary btn-sm" style={{ padding: '4px 10px', fontSize: '11px' }}>
-                            Read Contents
+                            Read Full Body
                           </span>
                         </div>
                       </div>
@@ -995,14 +1168,16 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* MODAL 2: Full Email Content Reader */}
+        {/* MODAL 2: Full Email Content Reader (With Complete HTML / Plaintext Body) */}
         {selectedEmail && (
           <div className="modal-overlay" onClick={() => setSelectedEmail(null)}>
-            <div className="mail-reader-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="mail-reader-sheet" style={{ maxWidth: '820px' }} onClick={(e) => e.stopPropagation()}>
               <div className="mail-reader-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <Inbox size={18} color="var(--cyan)" />
-                  <span style={{ fontSize: '15px', fontWeight: 700 }}>Email Content &amp; Delivery Trace</span>
+                  <span style={{ fontSize: '15px', fontWeight: 700 }}>
+                    {selectedEmail.subject || selectedEmail.mail_subject || 'Message Details'}
+                  </span>
                 </div>
                 <button onClick={() => setSelectedEmail(null)} className="copy-btn">
                   <X size={18} />
@@ -1010,90 +1185,119 @@ export default function Dashboard() {
               </div>
 
               <div className="mail-reader-body">
-                {/* Subject Banner */}
+                {/* Email Metadata Grid */}
                 <div className="email-subject-box">
                   <div className="email-subject-title">
-                    Message from {selectedEmail.from}
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-                    Delivered via SimpleLogin to your ProtonMail inbox
+                    {selectedEmail.subject || selectedEmail.mail_subject || 'No Subject'}
                   </div>
 
                   <div className="email-meta-grid">
                     <div className="email-meta-item">
                       <span className="email-meta-label">From</span>
-                      <span className="email-meta-val" title={selectedEmail.from}>{selectedEmail.from}</span>
+                      <span className="email-meta-val">{selectedEmail.from || selectedEmail.mail_from}</span>
                     </div>
 
                     <div className="email-meta-item">
-                      <span className="email-meta-label">To (Your Alias)</span>
-                      <span className="email-meta-val" title={selectedEmail.to || selectedEmail.aliasEmail}>
-                        {selectedEmail.aliasName} ({selectedEmail.to || selectedEmail.aliasEmail})
+                      <span className="email-meta-label">Recipient Alias</span>
+                      <span className="email-meta-val">
+                        {selectedEmail.aliasName} ({selectedEmail.aliasEmail || selectedEmail.to})
                       </span>
                     </div>
 
                     <div className="email-meta-item">
-                      <span className="email-meta-label">Delivered To</span>
-                      <span className="email-meta-val">loneewolf15@protonmail.com</span>
+                      <span className="email-meta-label">Engine</span>
+                      <span className="email-meta-val" style={{ textTransform: 'uppercase' }}>
+                        {selectedEmail.provider || 'inbox'}
+                      </span>
                     </div>
 
                     <div className="email-meta-item">
                       <span className="email-meta-label">Date &amp; Time</span>
                       <span className="email-meta-val">
-                        {selectedEmail.timestamp ? new Date(selectedEmail.timestamp * 1000).toLocaleString() : 'Recent'}
+                        {selectedEmail.date || (selectedEmail.timestamp ? new Date(selectedEmail.timestamp * 1000).toLocaleString() : 'Recent')}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Direct Action Bar */}
-                <div className="email-action-bar">
+                {/* Direct In-App HTML Body Render */}
+                {selectedEmail.provider === 'inbox' && (selectedEmail.body || selectedEmail.fullDetails?.body) ? (
                   <div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-main)' }}>
-                      Full Encrypted Message Payload
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-                      The raw message was forwarded directly to your ProtonMail inbox.
-                    </div>
-                  </div>
-
-                  <a
-                    href={`https://mail.proton.me/u/0/almost-all-mail#keyword=${encodeURIComponent((selectedEmail.to || selectedEmail.aliasEmail || '').split('@')[0])}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="proton-jump-btn"
-                  >
-                    <ExternalLink size={14} />
-                    <span>Read Full Body in ProtonMail</span>
-                  </a>
-                </div>
-
-                {/* Anonymous Reverse-Alias Reply Box */}
-                {selectedEmail.reverse_alias_address && (
-                  <div>
-                    <div style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 700, letterSpacing: '0.04em', marginBottom: '8px' }}>
-                      Reply Privately Without Exposing Your Real Email:
-                    </div>
-                    <div className="reply-address-box">
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: '#67e8f9', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {selectedEmail.reverse_alias_address}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 700, letterSpacing: '0.04em' }}>
+                        Message Content (Read Directly In App):
                       </span>
+                      <div className="pill-group" style={{ margin: 0 }}>
+                        <button
+                          type="button"
+                          className={`count-pill ${viewBodyMode === 'html' ? 'active' : ''}`}
+                          onClick={() => setViewBodyMode('html')}
+                          style={{ padding: '2px 8px', fontSize: '11px' }}
+                        >
+                          <Code size={11} /> Rich HTML
+                        </button>
+                        <button
+                          type="button"
+                          className={`count-pill ${viewBodyMode === 'text' ? 'active' : ''}`}
+                          onClick={() => setViewBodyMode('text')}
+                          style={{ padding: '2px 8px', fontSize: '11px' }}
+                        >
+                          <FileText size={11} /> Plain Text
+                        </button>
+                      </div>
+                    </div>
+
+                    {viewBodyMode === 'html' ? (
+                      <div
+                        className="html-body-container"
+                        dangerouslySetInnerHTML={{
+                          __html: selectedEmail.fullDetails?.body || selectedEmail.body
+                        }}
+                      />
+                    ) : (
+                      <div className="email-body-card">
+                        <pre className="email-body-text">
+                          {(selectedEmail.fullDetails?.body || selectedEmail.body || '').replace(/<[^>]*>?/gm, '')}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Relay Message Notice for SimpleLogin */
+                  <div className="email-action-bar">
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-main)' }}>
+                        Relayed Message
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
+                        This message was encrypted and forwarded straight to your destination inbox.
+                      </div>
+                    </div>
+
+                    {selectedEmail.provider === 'simplelogin' ? (
                       <a
-                        href={`mailto:${selectedEmail.reverse_alias_address}`}
-                        className="btn btn-secondary btn-sm"
-                        style={{ gap: '6px' }}
+                        href={`https://mail.proton.me/u/0/almost-all-mail#keyword=${encodeURIComponent((selectedEmail.to || selectedEmail.aliasEmail || '').split('@')[0])}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="proton-jump-btn"
                       >
-                        <Send size={12} />
-                        <span>Reply</span>
+                        <ExternalLink size={14} />
+                        <span>Read Full Body in ProtonMail</span>
                       </a>
-                    </div>
+                    ) : (
+                      <a
+                        href="https://mail.google.com"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="proton-jump-btn"
+                        style={{ background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)' }}
+                      >
+                        <ExternalLink size={14} />
+                        <span>Open Gmail</span>
+                      </a>
+                    )}
                   </div>
                 )}
-
-                {/* Educational Privacy Architecture Notice */}
-                <div className="privacy-notice-box">
-                  <strong>🔒 Zero-Retention Privacy Architecture:</strong> SimpleLogin functions strictly as an anonymous proxy relay. To protect your confidentiality, message bodies are encrypted on-the-fly and immediately passed to <code>loneewolf15@protonmail.com</code> without retaining copies on SimpleLogin cloud. Clicking <strong>Read Full Body in ProtonMail</strong> takes you right to the email.
-                </div>
               </div>
             </div>
           </div>
@@ -1105,10 +1309,10 @@ export default function Dashboard() {
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <h3 className="modal-title" style={{ color: 'var(--rose)' }}>
                 <Trash2 size={20} />
-                Delete All Active Aliases?
+                Flush &amp; Reset Aliases?
               </h3>
               <p className="modal-desc">
-                This will delete all <strong>{activeCount}</strong> active aliases currently on your SimpleLogin account, freeing up all 10 spots for fresh creations.
+                This will delete active aliases from <strong>{selectedProvider.toUpperCase()}</strong>, freeing up slots for fresh batches.
                 <br /><br />
                 <span style={{ color: 'var(--emerald)' }}>
                   ✓ All used Nigerian names remain stored in your history ledger so they will NOT be duplicated in your next batch.
@@ -1130,11 +1334,11 @@ export default function Dashboard() {
                 >
                   {deletingAll ? (
                     <>
-                      <RefreshCw size={15} className="spin" /> Deleting from SimpleLogin...
+                      <RefreshCw size={15} className="spin" /> Deleting...
                     </>
                   ) : (
                     <>
-                      <Trash2 size={15} /> Yes, Delete All & Reset Quota
+                      <Trash2 size={15} /> Yes, Flush &amp; Reset
                     </>
                   )}
                 </button>

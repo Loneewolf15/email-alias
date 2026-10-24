@@ -1,34 +1,96 @@
 import { NextResponse } from 'next/server';
-import { getUserInfo, getActiveAliases } from '@/lib/simplelogin';
+import { getUserInfo, getActiveAliases as getSLAliases } from '@/lib/simplelogin';
+import { getAccountDetails as getAddyAccount, getActiveAliases as getAddyAliases } from '@/lib/addy';
 import { loadHistory, loadRegistry, getPoolsByCategory } from '@/lib/names';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const hasKey = Boolean(process.env.SIMPLELOGIN_API_KEY);
-    const userInfo = hasKey ? await getUserInfo() : null;
-    const activeRemoteAliases = hasKey ? await getActiveAliases() : [];
+    const hasSLKey = Boolean(process.env.SIMPLELOGIN_API_KEY);
+    const hasAddyKey = Boolean(process.env.ANONADDR_API_KEY);
+
+    const [slUser, slAliases, addyAccount, addyAliases] = await Promise.all([
+      hasSLKey ? getUserInfo() : null,
+      hasSLKey ? getSLAliases() : [],
+      hasAddyKey ? getAddyAccount() : null,
+      hasAddyKey ? getAddyAliases() : []
+    ]);
+
     const localRegistry = loadRegistry();
     const history = loadHistory();
     const pools = getPoolsByCategory('all');
 
-    const isConnected = Boolean(userInfo && !userInfo.error && userInfo.email);
-    const quotaMax = userInfo?.is_premium ? 10000 : (userInfo?.max_alias_free_plan || 10);
-    const activeCount = isConnected ? activeRemoteAliases.length : localRegistry.length;
+    // Local breakdown by provider
+    const inboxLocal = localRegistry.filter(a => a.provider === 'inbox');
+    const slLocal = localRegistry.filter(a => a.provider === 'simplelogin' || !a.provider);
+    const addyLocal = localRegistry.filter(a => a.provider === 'addy');
+
+    // SimpleLogin metrics
+    const slConnected = Boolean(slUser && !slUser.error && slUser.email);
+    const slQuotaMax = slUser?.is_premium ? 10000 : (slUser?.max_alias_free_plan || 10);
+    const slActiveCount = slConnected ? slAliases.length : slLocal.length;
+    const slAvailableSlots = Math.max(0, slQuotaMax - slActiveCount);
+
+    // addy.io metrics
+    const addyConnected = Boolean(addyAccount && addyAccount.username);
+    const addySharedLimit = addyAccount?.active_shared_domain_alias_limit || 10;
+    const addyActiveCount = addyConnected ? addyAliases.length : addyLocal.length;
+    const addyAvailableSlots = Math.max(0, 20 - addyActiveCount);
+
+    // In-App Inbox metrics (Zero domain, direct body read, unlimited)
+    const inboxActiveCount = inboxLocal.length;
+
+    // Combined metrics
+    const totalActiveAliases = slActiveCount + addyActiveCount + inboxActiveCount;
 
     return NextResponse.json({
       status: 'ok',
-      hasApiKey: hasKey,
-      connected: isConnected,
-      account: {
-        email: userInfo?.email || 'Not connected',
-        name: userInfo?.name || '',
-        isPremium: userInfo?.is_premium || false,
-        quotaMax: quotaMax,
-        activeCount: activeCount,
-        availableSlots: Math.max(0, quotaMax - activeCount),
-        inDirectory: userInfo?.in_directory || false,
+      providers: {
+        inbox: {
+          name: 'Direct In-App Inbox',
+          type: 'in-app',
+          connected: true,
+          activeCount: inboxActiveCount,
+          availableSlots: 999,
+          canReadFullBody: true,
+          requiresCustomDomain: false,
+          description: 'Instant Nigerian inboxes with full HTML/plaintext message reader directly on this dashboard.'
+        },
+        simplelogin: {
+          name: 'SimpleLogin',
+          type: 'relay',
+          hasKey: hasSLKey,
+          connected: slConnected,
+          email: slUser?.email || 'loneewolf15@protonmail.com',
+          destinationMailbox: 'loneewolf15@protonmail.com',
+          activeCount: slActiveCount,
+          quotaMax: slQuotaMax,
+          availableSlots: slAvailableSlots,
+          canReadFullBody: false,
+          requiresCustomDomain: false
+        },
+        addy: {
+          name: 'addy.io (AnonAddy)',
+          type: 'relay',
+          hasKey: hasAddyKey,
+          connected: addyConnected,
+          username: addyAccount?.username || 'uniben',
+          destinationMailbox: 'anonymoux7x@gmail.com',
+          activeCount: addyActiveCount,
+          sharedDomainLimit: addySharedLimit,
+          totalLimit: 20,
+          availableSlots: addyAvailableSlots,
+          canReadFullBody: false,
+          requiresCustomDomain: false
+        }
+      },
+      combined: {
+        totalActiveCount: totalActiveAliases,
+        totalHistoricalCreated: history.length,
+        inboxCount: inboxActiveCount,
+        simpleloginCount: slActiveCount,
+        addyCount: addyActiveCount
       },
       stats: {
         totalHistoricalCreated: history.length,
