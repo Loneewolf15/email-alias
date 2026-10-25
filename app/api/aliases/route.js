@@ -28,12 +28,17 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const providerFilter = searchParams.get('provider') || 'all';
 
-    const hasSLKey = Boolean(process.env.SIMPLELOGIN_API_KEY);
-    const hasAddyKey = Boolean(process.env.ANONADDR_API_KEY);
+    const customSLKey = req.headers.get('x-simplelogin-key') || searchParams.get('slKey') || '';
+    const customAddyKey = req.headers.get('x-addy-key') || searchParams.get('addyKey') || '';
+    const effectiveSLKey = customSLKey || process.env.SIMPLELOGIN_API_KEY || '';
+    const effectiveAddyKey = customAddyKey || process.env.ANONADDR_API_KEY || '';
+
+    const hasSLKey = Boolean(effectiveSLKey);
+    const hasAddyKey = Boolean(effectiveAddyKey);
 
     const [slRemote, addyRemote] = await Promise.all([
-      hasSLKey ? getSLAliases() : [],
-      hasAddyKey ? getAddyAliases() : []
+      hasSLKey ? getSLAliases(effectiveSLKey) : [],
+      hasAddyKey ? getAddyAliases(effectiveAddyKey) : []
     ]);
 
     const localRegistry = loadRegistry();
@@ -154,23 +159,33 @@ export async function POST(req) {
       category = 'all',
       label = '',
       provider = 'inbox', // 'inbox' | 'simplelogin' | 'addy' | 'auto'
-      fillRemaining = false
+      fillRemaining = false,
+      simpleloginKey = '',
+      addyKey = '',
+      profileId = '',
+      profileName = ''
     } = body;
+
+    const customSLKey = req.headers.get('x-simplelogin-key') || simpleloginKey || '';
+    const customAddyKey = req.headers.get('x-addy-key') || addyKey || '';
+    const effectiveSLKey = customSLKey || process.env.SIMPLELOGIN_API_KEY || '';
+    const effectiveAddyKey = customAddyKey || process.env.ANONADDR_API_KEY || '';
+    const effectiveProfileName = req.headers.get('x-profile-name') || profileName || '';
 
     const requestedCount = Math.max(1, parseInt(count, 10) || 1);
 
     // Validate provider API keys early with helpful messages for Vercel users
-    if (provider === 'simplelogin' && !process.env.SIMPLELOGIN_API_KEY) {
+    if (provider === 'simplelogin' && !effectiveSLKey) {
       return NextResponse.json({
         success: false,
-        error: 'SimpleLogin API key is missing. Add SIMPLELOGIN_API_KEY to your Vercel Project Environment Variables, or use In-App Direct Inbox.'
+        error: 'SimpleLogin API key is missing. Set your key in User Profiles (top bar) or in Vercel Environment Variables.'
       }, { status: 400 });
     }
 
-    if (provider === 'addy' && !process.env.ANONADDR_API_KEY) {
+    if (provider === 'addy' && !effectiveAddyKey) {
       return NextResponse.json({
         success: false,
-        error: 'addy.io API key is missing. Add ANONADDR_API_KEY to your Vercel Project Environment Variables, or use In-App Direct Inbox.'
+        error: 'addy.io API key is missing. Set your key in User Profiles (top bar) or in Vercel Environment Variables.'
       }, { status: 400 });
     }
 
@@ -202,7 +217,7 @@ export async function POST(req) {
           lastName: pair.lastName,
           fullName: pair.fullName,
           note: noteText
-        });
+        }, effectiveSLKey);
       }
       // PROVIDER: addy.io
       else if (provider === 'addy') {
@@ -211,7 +226,7 @@ export async function POST(req) {
           lastName: pair.lastName,
           fullName: pair.fullName,
           note: noteText
-        });
+        }, effectiveAddyKey);
       }
       // PROVIDER: Auto (Inbox first for guaranteed zero limit & direct body read)
       else {
@@ -234,7 +249,9 @@ export async function POST(req) {
           note: noteText,
           created_at: new Date().toISOString(),
           provider: result.provider || provider,
-          token: result.token || result.sid_token || ''
+          token: result.token || result.sid_token || '',
+          profile_id: profileId || '',
+          profile_name: effectiveProfileName || ''
         };
         createdItems.push(item);
       } else {
@@ -280,6 +297,7 @@ export async function POST(req) {
       createdCount: createdItems.length,
       requestedCount: requestedCount,
       provider: provider,
+      profile: effectiveProfileName,
       errors: errors,
       hitRateLimit: hitRateLimit,
       message: hitRateLimit
@@ -304,6 +322,11 @@ export async function DELETE(req) {
       body = await req.json();
     } catch (e) {}
 
+    const customSLKey = req.headers.get('x-simplelogin-key') || body.slKey || '';
+    const customAddyKey = req.headers.get('x-addy-key') || body.addyKey || '';
+    const effectiveSLKey = customSLKey || process.env.SIMPLELOGIN_API_KEY || '';
+    const effectiveAddyKey = customAddyKey || process.env.ANONADDR_API_KEY || '';
+
     const isAll = deleteAll || body.all === true;
     const targetId = deleteId || body.id;
     const provider = targetProvider || body.provider || 'all';
@@ -317,9 +340,9 @@ export async function DELETE(req) {
 
       // 1. Delete all SimpleLogin if matching
       if (provider === 'all' || provider === 'simplelogin') {
-        const slRemote = await getSLAliases();
+        const slRemote = await getSLAliases(effectiveSLKey);
         for (const alias of slRemote) {
-          const ok = await deleteSLAlias(alias.id);
+          const ok = await deleteSLAlias(alias.id, effectiveSLKey);
           if (ok) deletedCount++;
           else errors.push(`SimpleLogin ${alias.email}`);
           await sleep(200);
@@ -328,9 +351,9 @@ export async function DELETE(req) {
 
       // 2. Delete all addy.io if matching
       if (provider === 'all' || provider === 'addy') {
-        const addyRemote = await getAddyAliases();
+        const addyRemote = await getAddyAliases(effectiveAddyKey);
         for (const alias of addyRemote) {
-          const ok = await deleteAddyAlias(alias.id);
+          const ok = await deleteAddyAlias(alias.id, effectiveAddyKey);
           if (ok) deletedCount++;
           else errors.push(`addy.io ${alias.email}`);
           await sleep(200);
@@ -366,9 +389,9 @@ export async function DELETE(req) {
     const itemProvider = item?.provider || provider;
 
     if (itemProvider === 'simplelogin') {
-      await deleteSLAlias(targetId);
+      await deleteSLAlias(targetId, effectiveSLKey);
     } else if (itemProvider === 'addy') {
-      await deleteAddyAlias(targetId);
+      await deleteAddyAlias(targetId, effectiveAddyKey);
     }
 
     // Always remove from local registry

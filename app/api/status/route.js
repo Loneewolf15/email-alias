@@ -5,16 +5,22 @@ import { loadHistory, loadRegistry, getPoolsByCategory } from '@/lib/names';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req) {
   try {
-    const hasSLKey = Boolean(process.env.SIMPLELOGIN_API_KEY);
-    const hasAddyKey = Boolean(process.env.ANONADDR_API_KEY);
+    const customSLKey = req.headers.get('x-simplelogin-key') || '';
+    const customAddyKey = req.headers.get('x-addy-key') || '';
+
+    const effectiveSLKey = customSLKey || process.env.SIMPLELOGIN_API_KEY || '';
+    const effectiveAddyKey = customAddyKey || process.env.ANONADDR_API_KEY || '';
+
+    const hasSLKey = Boolean(effectiveSLKey);
+    const hasAddyKey = Boolean(effectiveAddyKey);
 
     const [slUser, slAliases, addyAccount, addyAliases] = await Promise.all([
-      hasSLKey ? getUserInfo() : null,
-      hasSLKey ? getSLAliases() : [],
-      hasAddyKey ? getAddyAccount() : null,
-      hasAddyKey ? getAddyAliases() : []
+      hasSLKey ? getUserInfo(effectiveSLKey) : null,
+      hasSLKey ? getSLAliases(effectiveSLKey) : [],
+      hasAddyKey ? getAddyAccount(effectiveAddyKey) : null,
+      hasAddyKey ? getAddyAliases(effectiveAddyKey) : []
     ]);
 
     const localRegistry = loadRegistry();

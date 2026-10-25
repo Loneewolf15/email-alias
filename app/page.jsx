@@ -29,7 +29,12 @@ import {
   Globe,
   Radio,
   FileText,
-  Code
+  Code,
+  ChevronDown,
+  Settings,
+  Key,
+  Users,
+  Edit3
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -70,6 +75,78 @@ export default function Dashboard() {
   const [rateLimitMessage, setRateLimitMessage] = useState(null);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
 
+  // Multi-User / Account Profiles (Who is using?)
+  const defaultProfiles = [
+    {
+      id: 'me',
+      name: 'Me (Loneewolf)',
+      slKey: '',
+      addyKey: '',
+      slMailbox: 'loneewolf15@protonmail.com',
+      addyMailbox: 'anonymoux7x@gmail.com',
+      isDefault: true
+    },
+    {
+      id: 'friend',
+      name: 'Friend',
+      slKey: '',
+      addyKey: '',
+      slMailbox: '',
+      addyMailbox: '',
+      isDefault: false
+    }
+  ];
+
+  const [profiles, setProfiles] = useState(() => {
+    if (typeof window === 'undefined') return defaultProfiles;
+    try {
+      const stored = localStorage.getItem('naija_profiles');
+      return stored ? JSON.parse(stored) : defaultProfiles;
+    } catch (e) {
+      return defaultProfiles;
+    }
+  });
+
+  const [activeProfileId, setActiveProfileId] = useState(() => {
+    if (typeof window === 'undefined') return 'me';
+    try {
+      return localStorage.getItem('naija_active_profile_id') || 'me';
+    } catch (e) {
+      return 'me';
+    }
+  });
+
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const [showProfileSettingsModal, setShowProfileSettingsModal] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(null);
+
+  const activeProfile = profiles.find(p => p.id === activeProfileId) || profiles[0] || defaultProfiles[0];
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('naija_profiles', JSON.stringify(profiles));
+      } catch (e) {}
+    }
+  }, [profiles]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('naija_active_profile_id', activeProfileId);
+      } catch (e) {}
+    }
+  }, [activeProfileId]);
+
+  const getProfileHeaders = useCallback(() => {
+    return {
+      'x-simplelogin-key': activeProfile?.slKey || '',
+      'x-addy-key': activeProfile?.addyKey || '',
+      'x-profile-id': activeProfile?.id || '',
+      'x-profile-name': activeProfile?.name || ''
+    };
+  }, [activeProfile]);
+
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
@@ -104,9 +181,10 @@ export default function Dashboard() {
   const refreshData = useCallback(async () => {
     try {
       setLoading(true);
+      const headers = getProfileHeaders();
       const [statusRes, aliasesRes, activitiesRes] = await Promise.all([
-        fetch('/api/status'),
-        fetch(`/api/aliases?provider=${selectedProvider}`),
+        fetch('/api/status', { headers }),
+        fetch(`/api/aliases?provider=${selectedProvider}`, { headers }),
         fetch('/api/activities')
       ]);
 
@@ -144,7 +222,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [selectedProvider, getLocalInboxes]);
+  }, [selectedProvider, getLocalInboxes, getProfileHeaders]);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -250,15 +328,24 @@ export default function Dashboard() {
     setRateLimitMessage(null);
 
     try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...getProfileHeaders()
+      };
+
       const res = await fetch('/api/aliases', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           count: fillRemaining ? 10 : count,
           category,
           label,
           provider: generatorProvider,
-          fillRemaining
+          fillRemaining,
+          simpleloginKey: activeProfile?.slKey || '',
+          addyKey: activeProfile?.addyKey || '',
+          profileId: activeProfile?.id || '',
+          profileName: activeProfile?.name || ''
         })
       });
 
@@ -270,7 +357,7 @@ export default function Dashboard() {
       }
 
       if (data.createdCount > 0) {
-        showToast(`Created ${data.createdCount} new alias(es) on ${generatorProvider.toUpperCase()}!`);
+        showToast(`Created ${data.createdCount} new alias(es) on ${generatorProvider.toUpperCase()} for ${activeProfile.name}!`);
         // Save in-app inboxes directly to localStorage for Vercel serverless durability
         const inboxesCreated = (data.created || []).filter(c => c.provider === 'inbox');
         if (inboxesCreated.length > 0) {
@@ -301,7 +388,8 @@ export default function Dashboard() {
     setDeletingId(item.id);
     try {
       const res = await fetch(`/api/aliases?id=${encodeURIComponent(item.id)}&provider=${encodeURIComponent(item.provider || 'simplelogin')}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: getProfileHeaders()
       });
       const data = await res.json();
       if (res.ok) {
@@ -330,7 +418,8 @@ export default function Dashboard() {
     setDeletingAll(true);
     try {
       const res = await fetch(`/api/aliases?all=true&provider=${encodeURIComponent(selectedProvider)}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: getProfileHeaders()
       });
       const data = await res.json();
       if (res.ok) {
@@ -368,20 +457,117 @@ export default function Dashboard() {
     <>
       <div className="bg-grid" />
       <div className="container">
-        {/* Header with Multi-Provider Indicator */}
+        {/* Header with Multi-Provider Indicator & User Switcher */}
         <header className="header">
           <div className="brand-wrapper">
-            <span className="brand-flag" role="img" aria-label="Nigeria">🇳🇬</span>
-            <div>
-              <h1 className="brand-title">NaijaAlias</h1>
-              <p className="brand-subtitle">
-                Nigerian Identity &bull; Direct In-App Inbox &bull; SimpleLogin &bull; addy.io
-              </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <span className="brand-flag" role="img" aria-label="Nigeria">🇳🇬</span>
+              <div>
+                <h1 className="brand-title">NaijaAlias</h1>
+                <p className="brand-subtitle">
+                  Nigerian Identity &bull; Direct In-App Inbox &bull; SimpleLogin &bull; addy.io
+                </p>
+              </div>
+            </div>
+
+            {/* User Profile Selector (Who is using?) */}
+            <div className="user-profile-bar">
+              <button
+                type="button"
+                className="user-profile-btn"
+                onClick={() => setShowProfileDropdown(prev => !prev)}
+                title="Switch active user profile"
+              >
+                <div className="user-avatar-small">
+                  {activeProfile?.name?.slice(0, 2).toUpperCase() || 'US'}
+                </div>
+                <span>{activeProfile?.name || 'User'}</span>
+                <ChevronDown size={14} color="var(--text-dim)" />
+              </button>
+
+              {/* Profile Dropdown Menu */}
+              {showProfileDropdown && (
+                <div className="profile-dropdown-menu">
+                  <div style={{ padding: '6px 12px 8px 12px', fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 700, letterSpacing: '0.04em' }}>
+                    Who is using?
+                  </div>
+                  {profiles.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`profile-dropdown-item ${p.id === activeProfileId ? 'active' : ''}`}
+                      onClick={() => {
+                        setActiveProfileId(p.id);
+                        setShowProfileDropdown(false);
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div className="user-avatar-small" style={{ width: '22px', height: '22px', fontSize: '10px' }}>
+                          {p.name.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{p.name}</div>
+                          <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                            {p.slMailbox || p.addyMailbox || (p.isDefault ? 'Default Accounts' : 'Custom Accounts')}
+                          </div>
+                        </div>
+                      </div>
+                      {p.id === activeProfileId && <Check size={14} color="var(--emerald)" />}
+                    </button>
+                  ))}
+
+                  <div className="profile-dropdown-divider" />
+
+                  <button
+                    type="button"
+                    className="profile-dropdown-item"
+                    onClick={() => {
+                      setEditingProfile({ ...activeProfile });
+                      setShowProfileSettingsModal(true);
+                      setShowProfileDropdown(false);
+                    }}
+                    style={{ color: 'var(--cyan)' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Settings size={14} />
+                      <span>Configure API Keys &amp; Accounts</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="profile-dropdown-item"
+                    onClick={() => {
+                      const newId = `friend_${Date.now()}`;
+                      const newP = {
+                        id: newId,
+                        name: `Friend ${profiles.length}`,
+                        slKey: '',
+                        addyKey: '',
+                        slMailbox: '',
+                        addyMailbox: '',
+                        isDefault: false
+                      };
+                      setProfiles(prev => [...prev, newP]);
+                      setEditingProfile(newP);
+                      setActiveProfileId(newId);
+                      setShowProfileSettingsModal(true);
+                      setShowProfileDropdown(false);
+                    }}
+                    style={{ color: 'var(--emerald)' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Plus size={14} />
+                      <span>+ Add Another User / Friend</span>
+                    </div>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Provider Destination Chips (Apple Glass Style) */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {/* Provider Destination Chips (Apple Glass Style, Responsive Scroll on Mobile) */}
+          <div className="header-routing-bar">
             {/* In-App Direct Chip */}
             <div className="mailbox-target-pill" title="Read full email bodies directly in-app with zero custom domain">
               <div className="mailbox-icon-wrap" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
@@ -401,38 +587,38 @@ export default function Dashboard() {
             </div>
 
             {/* SimpleLogin Chip */}
-            <div className="mailbox-target-pill" title="SimpleLogin Relay">
+            <div className="mailbox-target-pill" title={`SimpleLogin Relay for ${activeProfile.name}`}>
               <div className="mailbox-icon-wrap" style={{ background: 'rgba(139, 92, 246, 0.15)', color: '#c4b5fd' }}>
                 <Shield size={13} />
               </div>
               <div>
                 <div style={{ fontSize: '9px', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.04em' }}>
-                  SimpleLogin Relay
+                  SimpleLogin ({activeProfile.name})
                 </div>
                 <div className="mailbox-target-address" style={{ fontSize: '11px' }}>
-                  loneewolf15@protonmail.com
+                  {activeProfile.slMailbox || slInfo?.email || 'loneewolf15@protonmail.com'}
                 </div>
               </div>
               <span className="provider-badge simplelogin" style={{ fontSize: '9px', padding: '2px 6px' }}>
-                10 Free
+                {activeProfile.slKey ? 'Custom Key' : '10 Free'}
               </span>
             </div>
 
             {/* addy.io Chip */}
-            <div className="mailbox-target-pill" title="addy.io Relay (Limit Booster)">
+            <div className="mailbox-target-pill" title={`addy.io Booster for ${activeProfile.name}`}>
               <div className="mailbox-icon-wrap" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fde68a' }}>
                 <Zap size={13} />
               </div>
               <div>
                 <div style={{ fontSize: '9px', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.04em' }}>
-                  addy.io Booster
+                  addy.io ({activeProfile.name})
                 </div>
                 <div className="mailbox-target-address" style={{ fontSize: '11px' }}>
-                  anonymoux7x@gmail.com
+                  {activeProfile.addyMailbox || 'anonymoux7x@gmail.com'}
                 </div>
               </div>
               <span className="provider-badge addy" style={{ fontSize: '9px', padding: '2px 6px' }}>
-                +20/Day
+                {activeProfile.addyKey ? 'Custom Key' : '+20/Day'}
               </span>
             </div>
 
@@ -1349,6 +1535,134 @@ export default function Dashboard() {
                     )}
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Profile Settings Modal (Configure Friend API keys & mailboxes) */}
+        {showProfileSettingsModal && editingProfile && (
+          <div className="modal-overlay" onClick={() => setShowProfileSettingsModal(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <h3 className="modal-title" style={{ margin: 0 }}>
+                  <Users size={20} color="var(--emerald)" />
+                  Configure User Profile
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowProfileSettingsModal(false)}
+                  className="copy-btn"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <p className="modal-desc" style={{ marginBottom: '18px', fontSize: '13px' }}>
+                Configure individual API keys and target mailboxes for this user. When selected, SimpleLogin and addy.io will forward all verification codes and OTPs directly to their address.
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '22px' }}>
+                <div className="form-group">
+                  <label className="form-label">Profile / Friend Name</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={editingProfile.name}
+                    onChange={(e) => setEditingProfile({ ...editingProfile, name: e.target.value })}
+                    placeholder="e.g. Friend, Alex, Chinedu"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Shield size={13} color="#c4b5fd" />
+                    SimpleLogin API Key (Optional)
+                  </label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    value={editingProfile.slKey || ''}
+                    onChange={(e) => setEditingProfile({ ...editingProfile, slKey: e.target.value })}
+                    placeholder={editingProfile.isDefault ? 'Leave empty to use server default (.env)' : 'Paste friend’s SimpleLogin API key'}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">SimpleLogin Mailbox / Proton Email</label>
+                  <input
+                    type="email"
+                    className="form-input"
+                    value={editingProfile.slMailbox || ''}
+                    onChange={(e) => setEditingProfile({ ...editingProfile, slMailbox: e.target.value })}
+                    placeholder="e.g. friend@protonmail.com"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Zap size={13} color="#fde68a" />
+                    addy.io (AnonAddy) API Key (Optional)
+                  </label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    value={editingProfile.addyKey || ''}
+                    onChange={(e) => setEditingProfile({ ...editingProfile, addyKey: e.target.value })}
+                    placeholder={editingProfile.isDefault ? 'Leave empty to use server default (.env)' : 'Paste friend’s addy.io API key'}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">addy.io Target Gmail / Mailbox</label>
+                  <input
+                    type="email"
+                    className="form-input"
+                    value={editingProfile.addyMailbox || ''}
+                    onChange={(e) => setEditingProfile({ ...editingProfile, addyMailbox: e.target.value })}
+                    placeholder="e.g. friend@gmail.com"
+                  />
+                </div>
+              </div>
+
+              <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
+                {!editingProfile.isDefault ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`Delete profile "${editingProfile.name}"?`)) {
+                        setProfiles(prev => prev.filter(p => p.id !== editingProfile.id));
+                        setActiveProfileId('me');
+                        setShowProfileSettingsModal(false);
+                      }
+                    }}
+                    className="btn btn-danger btn-sm"
+                  >
+                    <Trash2 size={14} /> Delete Profile
+                  </button>
+                ) : <div />}
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowProfileSettingsModal(false)}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfiles(prev => prev.map(p => p.id === editingProfile.id ? editingProfile : p));
+                      setShowProfileSettingsModal(false);
+                      showToast(`Saved settings for ${editingProfile.name}!`);
+                      refreshData();
+                    }}
+                    className="btn btn-primary btn-sm"
+                  >
+                    <Check size={14} /> Save Profile Settings
+                  </button>
+                </div>
               </div>
             </div>
           </div>
