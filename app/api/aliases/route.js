@@ -158,6 +158,22 @@ export async function POST(req) {
     } = body;
 
     const requestedCount = Math.max(1, parseInt(count, 10) || 1);
+
+    // Validate provider API keys early with helpful messages for Vercel users
+    if (provider === 'simplelogin' && !process.env.SIMPLELOGIN_API_KEY) {
+      return NextResponse.json({
+        success: false,
+        error: 'SimpleLogin API key is missing. Add SIMPLELOGIN_API_KEY to your Vercel Project Environment Variables, or use In-App Direct Inbox.'
+      }, { status: 400 });
+    }
+
+    if (provider === 'addy' && !process.env.ANONADDR_API_KEY) {
+      return NextResponse.json({
+        success: false,
+        error: 'addy.io API key is missing. Add ANONADDR_API_KEY to your Vercel Project Environment Variables, or use In-App Direct Inbox.'
+      }, { status: 400 });
+    }
+
     const pairs = generateNamePairs(requestedCount, category);
 
     const createdItems = [];
@@ -218,7 +234,7 @@ export async function POST(req) {
           note: noteText,
           created_at: new Date().toISOString(),
           provider: result.provider || provider,
-          token: result.sid_token || ''
+          token: result.token || result.sid_token || ''
         };
         createdItems.push(item);
       } else {
